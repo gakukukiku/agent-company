@@ -1,0 +1,201 @@
+{
+  "name": "コンテンツ自動生成（Claude × microCMS）",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "trigger",
+      "name": "手動トリガー",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ========== クライアント情報をここに入力 ==========\nconst clientInfo = {\n  shopName:     'hair salon ViHo',\n  businessType: '美容室',\n  location:     '高知市朝倉',\n  features:     'マンツーマン・完全予約制・似合わせカット専門・プライベートサロン',\n  phone:        '088-000-0000',\n  address:      '高知県高知市朝倉○-○-○',\n  services:     'カット 5,500円 / カラー 8,800円〜 / インナーカラー 11,000円〜 / ハイライト 16,500円〜',\n  staffName:    '山田 花子',\n  staffCareer:  '大阪の有名サロンで10年キャリアを積み、地元高知に戻り開業',\n  instagram:    'https://www.instagram.com/example',\n  line:         'https://lin.ee/example',\n  mapEmbed:     ''\n};\n// =================================================\n\nreturn [{ json: clientInfo }];"
+      },
+      "id": "client-info",
+      "name": "クライアント情報",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "const c = $input.first().json;\n\nconst prompt = `あなたは高知県の小規模店舗向けWebサイトのコピーライターです。以下の店舗情報をもとに、Webサイトに掲載するコンテンツを生成してください。\n\n店舗情報：\n- 店舗名: ${c.shopName}\n- 業種: ${c.businessType}\n- 場所: ${c.location}\n- 特徴: ${c.features}\n- メニュー: ${c.services}\n- スタッフ: ${c.staffName} / ${c.staffCareer}\n\nルール：\n- AIっぽい表現禁止（シームレスな・革新的な・包括的な・洗練された等）\n- 「〜をサポートします」「〜をお手伝いします」禁止\n- 地域名・人名・具体的な数値を使う\n- 体言止め・問いかけ・具体的な動詞を使う\n- 保証・確約表現禁止\n\n以下のJSON形式のみで出力してください（説明文は不要）：\n{\n  \"tagline\": \"30文字以内のキャッチコピー\",\n  \"subline\": \"エリアと特徴を含むサブキャッチ（30文字以内）\",\n  \"seoTitle\": \"SEOタイトル（32文字以内）\",\n  \"seoDescription\": \"meta description（120文字以内）\",\n  \"staffBio\": \"スタッフ紹介文（150文字以内）\",\n  \"services\": [\n    {\"name\": \"メニュー名\", \"price\": \"料金\", \"desc\": \"40文字以内の説明\"}\n  ],\n  \"testimonials\": [\n    {\"text\": \"お客様の声（60文字以内）\", \"name\": \"属性（例：30代女性）\"}\n  ]\n}`;\n\nconst body = {\n  model: 'claude-sonnet-4-6',\n  max_tokens: 2000,\n  messages: [{ role: 'user', content: prompt }]\n};\n\nreturn [{ json: { body, clientInfo: c } }];"
+      },
+      "id": "prepare-request",
+      "name": "Claudeリクエストを準備",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "={{$env.CLAUDE_API_KEY}}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}"
+      },
+      "id": "claude-api",
+      "name": "Claude APIでコンテンツ生成",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst text = response.content[0].text;\n\n// JSONブロックを抽出\nconst jsonMatch = text.match(/```json\\n?([\\s\\S]*?)\\n?```/) || text.match(/(\\{[\\s\\S]*\\})/);\nif (!jsonMatch) throw new Error('JSONが見つかりません: ' + text);\n\nconst jsonStr = jsonMatch[1] || jsonMatch[0];\nconst generated = JSON.parse(jsonStr);\nconst client = $('Claudeリクエストを準備').first().json.clientInfo;\n\nreturn [{ json: { ...generated, client } }];"
+      },
+      "id": "parse-response",
+      "name": "レスポンスを解析",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.github.com/repos/gakukukiku/beauty-salon-template/actions/workflows/deploy.yml/dispatches",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{$env.GITHUB_TOKEN}}" },
+            { "name": "Accept", "value": "application/vnd.github.v3+json" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"ref\": \"main\"}"
+      },
+      "id": "github-deploy",
+      "name": "GitHub：サイトを再ビルド",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 260]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "https://agent-company-145.microcms.io/api/v1/site-config",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-MICROCMS-API-KEY", "value": "={{$env.MICROCMS_API_KEY}}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ name: $json.client.shopName, tagline: $json.tagline, subline: $json.subline, phone: $json.client.phone, address: $json.client.address, instagram: $json.client.instagram, line: $json.client.line, seoTitle: $json.seoTitle, seoDescription: $json.seoDescription }) }}"
+      },
+      "id": "update-site-config",
+      "name": "microCMS：基本情報を更新",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 260]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $('レスポンスを解析').first().json;\nreturn [{ json: { name: data.client.staffName, role: 'オーナースタイリスト', bio: data.staffBio } }];"
+      },
+      "id": "prepare-staff",
+      "name": "スタッフデータを整形",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://agent-company-145.microcms.io/api/v1/staff",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-MICROCMS-API-KEY", "value": "={{$env.MICROCMS_API_KEY}}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ name: $json.name, role: $json.role, bio: $json.bio }) }}"
+      },
+      "id": "post-staff",
+      "name": "microCMS：スタッフを追加",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $('レスポンスを解析').first().json;\nreturn data.testimonials.map(t => ({ json: t }));"
+      },
+      "id": "prepare-testimonials",
+      "name": "お客様の声を分割",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 540]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://agent-company-145.microcms.io/api/v1/testimonials",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-MICROCMS-API-KEY", "value": "={{$env.MICROCMS_API_KEY}}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $json.text, name: $json.name }) }}"
+      },
+      "id": "post-testimonials",
+      "name": "microCMS：お客様の声を追加",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 540]
+    }
+  ],
+  "connections": {
+    "手動トリガー": {
+      "main": [[{ "node": "クライアント情報", "type": "main", "index": 0 }]]
+    },
+    "クライアント情報": {
+      "main": [[{ "node": "Claudeリクエストを準備", "type": "main", "index": 0 }]]
+    },
+    "Claudeリクエストを準備": {
+      "main": [[{ "node": "Claude APIでコンテンツ生成", "type": "main", "index": 0 }]]
+    },
+    "Claude APIでコンテンツ生成": {
+      "main": [[{ "node": "レスポンスを解析", "type": "main", "index": 0 }]]
+    },
+    "レスポンスを解析": {
+      "main": [[
+        { "node": "microCMS：基本情報を更新", "type": "main", "index": 0 },
+        { "node": "スタッフデータを整形", "type": "main", "index": 0 },
+        { "node": "お客様の声を分割", "type": "main", "index": 0 }
+      ]]
+    },
+    "スタッフデータを整形": {
+      "main": [[{ "node": "microCMS：スタッフを追加", "type": "main", "index": 0 }]]
+    },
+    "お客様の声を分割": {
+      "main": [[{ "node": "microCMS：お客様の声を追加", "type": "main", "index": 0 }]]
+    },
+    "microCMS：基本情報を更新": {
+      "main": [[{ "node": "GitHub：サイトを再ビルド", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" }
+}
